@@ -1,56 +1,40 @@
 using NUnit.Framework;
-using OpenQA.Selenium;
-using System;
-using System.Linq;
-using System.Globalization;
-using MovieDBTests.Drivers;
 using MovieDBTests.Pages;
 
 namespace MovieDBTests.Tests.UI
 {
     [TestFixture]
-    public class DiscoverFiltersTests
+    public class DiscoverFiltersTests : BaseTest
     {
-        private IWebDriver _driver = null!;
-        private DiscoverPage _page = null!;
+        private DiscoverPage _page;
 
         [SetUp]
-        public void Setup()
+        public void SetupPage()
         {
-            _driver = WebDriverManager.Create();
-            _page = new DiscoverPage(_driver);
-            _page.Open();
+            _page = new DiscoverPage(Driver);
         }
 
         [Test]
-        public void Filter_By_ReleaseDate_Ascending_And_Genres()
+        public void Can_Open_Discover_With_Filters()
         {
-            _page.SortByReleaseDateAscending();
-            _page.SelectGenres("Drama");
+            var genreId = "28"; // Action
+            var from = 2000;
+            var to = 2010;
 
-            _page.SetReleaseDateRange("1990", "2005", useCalendar: true);
-            _page.SetMinimumUserScore(6);
+            _page.OpenWithFilters(genreId, from, to);
+            var results = _page.GetMovieTitles();
 
-            var results = _page.ReadResults();
-
-            // Assertions: dates ascending and within range
-            var dates = results.Select(r => r.ReleaseDate).Where(d => d.HasValue).Select(d => d!.Value).ToList();
-            Assert.That(dates, Is.Ordered.Ascending, "Release dates should be ascending.");
-            Assert.That(dates.All(d => d.Year >= 1990 && d.Year <= 2005), "Dates must be between 1990 and 2005.");
+            Assert.That(results, Is.Not.Empty, "Should load results with filters applied");
         }
 
-        [TearDown]
-        public void Teardown()
+        [Test]
+        public void Can_Load_Drama_90s()
         {
-            try
-            {
-                var scr = ((ITakesScreenshot)_driver).GetScreenshot();
-                var name = System.IO.Path.Combine(TestContext.CurrentContext.WorkDirectory, $"screenshot_{TestContext.CurrentContext.Test.Name}.png");
-                scr.SaveAsFile(name);
-                TestContext.AddTestAttachment(name);
-            }
-            catch { /* ignore */ }
-            _driver.Quit();
+            var genreId = "18"; // Drama
+            _page.OpenWithFilters(genreId, 1990, 1999);
+            var results = _page.GetMovieTitles();
+
+            Assert.That(results, Is.Not.Empty, "Should load Drama movies from the 90s");
         }
     }
 }

@@ -1,60 +1,42 @@
 using NUnit.Framework;
-using OpenQA.Selenium;
-using System.Linq;
-using System.Threading.Tasks;
-using System;
-using System.Collections.Generic;
-
-using MovieDBTests.Drivers;
+using MovieDBTests.API;   // doar acesta!
 using MovieDBTests.Pages;
-using MovieDBTests.API;
+using System.Linq;
 
 namespace MovieDBTests.Tests.Integration
 {
     [TestFixture]
-    public class UiVsApiComparisonTests
+    public class UiVsApiComparisonTests : BaseTest
     {
-        private IWebDriver _driver = null!;
-        private DiscoverPage _page = null!;
+        private DiscoverPage _page;
 
         [SetUp]
-        public void Setup()
+        public void SetupPage()
         {
-            _driver = WebDriverManager.Create();
-            _page = new DiscoverPage(_driver);
-            _page.Open();
+            _page = new DiscoverPage(Driver);
         }
 
         [Test]
-        public async Task Compare_UI_And_API_Results_By_Title()
+        public void Compare_UI_And_API_Results_By_Title()
         {
-            // UI actions
-            _page.SortByReleaseDateAscending();
-            _page.SelectGenres("Drama");
-            _page.SetReleaseDateRange("1990", "2005", useCalendar: true);
-            var uiResults = _page.ReadResults();
-            var uiTitles = uiResults.Select(r => r.Title).Where(t => !string.IsNullOrWhiteSpace(t)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var genreId = "18"; // Drama
+            var from = 1990;
+            var to = 2005;
 
-            // API actions
+            // API
             var api = new MovieApi();
-            var genreApi = new GenreApi();
-            var genres = await genreApi.GetGenresAsync();
-            // pick Drama id
-            var dramaId = genres.FirstOrDefault(kvp => kvp.Value.Equals("Drama", StringComparison.OrdinalIgnoreCase)).Key.ToString();
-            var apiResults = await api.DiscoverAllPagesAsync("primary_release_date.asc", withGenres: dramaId, from: "1990-01-01", to: "2005-12-31", maxPages: 2);
-            var apiTitles = apiResults.Select(j => j.Value<string>("title") ?? "").Where(t => !string.IsNullOrWhiteSpace(t)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var apiMovies = api.DiscoverAllPagesAsync(
+                "primary_release_date.asc", genreId, $"{from}-01-01", $"{to}-12-31", 2).Result;
 
-            // Comparison
-            var intersection = uiTitles.Intersect(apiTitles, StringComparer.OrdinalIgnoreCase).ToList();
-            Assert.That(intersection.Count, Is.GreaterThan(0), "At least some movies should overlap between UI and API.");
+            // UI
+            _page.OpenWithFilters(genreId, from, to);
+            var uiMovies = _page.GetMovieTitles();
 
-            TestContext.WriteLine($"UI count: {uiTitles.Count}, API count: {apiTitles.Count}, Intersection: {intersection.Count}");
-        }
+            Assert.That(uiMovies, Is.Not.Empty, "UI should return some movies");
+            Assert.That(apiMovies, Is.Not.Empty, "API should return some movies");
 
-        [TearDown]
-        public void Teardown()
-        {
-            try { _driver.Quit(); } catch { }
+            var overlap = uiMovies.Intersect(apiMovies).ToList();
+            Assert.That(overlap.Any(), Is.True, "There should be at least one common movie");
         }
     }
 }
