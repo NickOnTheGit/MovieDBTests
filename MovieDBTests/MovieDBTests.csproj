@@ -15,6 +15,7 @@
     <PackageReference Include="Selenium.Support" Version="4.24.0" />
     <PackageReference Include="Selenium.WebDriver.ChromeDriver" Version="128.0.6613.11900" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="SeleniumExtras.WaitHelpers" Version="1.0.2" />
   </ItemGroup>
 
   <ItemGroup>

@@ -74,8 +74,8 @@ namespace MovieDBTests.Pages
                 return;
             }
 
-            from.Clear(); from.SendKeys(f"{fromYear}-01-01");
-            to.Clear(); to.SendKeys(f"{toYear}-12-31");
+            from.Clear(); from.SendKeys($"{fromYear}-01-01");
+            to.Clear(); to.SendKeys($"{toYear}-12-31");
             to.SendKeys(Keys.Enter);
         }
 
