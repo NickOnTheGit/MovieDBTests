@@ -12,6 +12,7 @@ namespace MovieDBTests.Utils
         {
             // Prefer environment variables when present
             var apiKeyEnv = Environment.GetEnvironmentVariable("TMDB_API_KEY");
+            var bearerTokenEnv = Environment.GetEnvironmentVariable("TMDB_BEARER_TOKEN");
 
             var path = Path.Combine(AppContext.BaseDirectory, "Config", "appsettings.json");
             if (!File.Exists(path))
@@ -19,9 +20,15 @@ namespace MovieDBTests.Utils
 
             var json = JObject.Parse(File.ReadAllText(path));
 
+            // Update config with environment variables if available
             if (!string.IsNullOrWhiteSpace(apiKeyEnv))
             {
                 json["API"]!["ApiKey"] = apiKeyEnv;
+            }
+
+            if (!string.IsNullOrWhiteSpace(bearerTokenEnv))
+            {
+                json["API"]!["BearerToken"] = bearerTokenEnv;
             }
 
             _config = json;
@@ -30,6 +37,7 @@ namespace MovieDBTests.Utils
         public static string DiscoverUrl => _config["UI"]!["DiscoverUrl"]!.ToString();
         public static string ApiBaseUrl => _config["API"]!["BaseUrl"]!.ToString();
         public static string ApiKey => _config["API"]!["ApiKey"]!.ToString();
+        public static string? BearerToken => _config["API"]?["BearerToken"]?.ToString();
         public static bool Headless => bool.TryParse(_config["Browser"]!["Headless"]!.ToString(), out var h) && h;
     }
 }

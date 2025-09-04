@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using System.Net.Http.Headers;
 
 namespace MovieDBTests.API
 {
@@ -15,20 +16,18 @@ namespace MovieDBTests.API
         public MovieApi(HttpClient? httpClient = null)
         {
             _http = httpClient ?? new HttpClient();
-            // Don't set base address here, use full URLs
+
+            // Set up authentication - prefer Bearer token if available
+            if (!string.IsNullOrWhiteSpace(Utils.Config.BearerToken))
+            {
+                _http.DefaultRequestHeaders.Authorization =
+                    new AuthenticationHeaderValue("Bearer", Utils.Config.BearerToken);
+            }
         }
 
         public async Task<JArray> DiscoverAsync(string sortBy = "primary_release_date.asc", string? withGenres = null, string? from = null, string? to = null, int page = 1)
         {
-            // Use the working API pattern we discovered
-            var url = $"https://api.themoviedb.org/3/discover/movie?api_key={Utils.Config.ApiKey}&sort_by={Uri.EscapeDataString(sortBy)}&page={page}";
-
-            if (!string.IsNullOrWhiteSpace(withGenres))
-                url += $"&with_genres={Uri.EscapeDataString(withGenres)}";
-            if (!string.IsNullOrWhiteSpace(from))
-                url += $"&primary_release_date.gte={Uri.EscapeDataString(from)}";
-            if (!string.IsNullOrWhiteSpace(to))
-                url += $"&primary_release_date.lte={Uri.EscapeDataString(to)}";
+            var url = BuildDiscoverUrl(sortBy, withGenres, from, to, page);
 
             TestContext.WriteLine($"API Request: {url}");
 
@@ -43,23 +42,15 @@ namespace MovieDBTests.API
                 {
                     TestContext.WriteLine($"API Error Response: {content}");
 
-                    // Fallback to popular movies if discover doesn't work
-                    var fallbackUrl = $"https://api.themoviedb.org/3/movie/popular?api_key={Utils.Config.ApiKey}&page={page}";
-                    TestContext.WriteLine($"Trying fallback: {fallbackUrl}");
-
-                    resp = await _http.GetAsync(fallbackUrl);
-                    content = await resp.Content.ReadAsStringAsync();
-                    resp.EnsureSuccessStatusCode();
+                    // Try alternative endpoints if discover fails
+                    return await TryAlternativeEndpoints(page);
                 }
 
                 var json = JObject.Parse(content);
                 var results = (JArray)json["results"]!;
 
-                // If we have date filters, apply them client-side as fallback
-                if (!string.IsNullOrWhiteSpace(from) || !string.IsNullOrWhiteSpace(to))
-                {
-                    results = FilterByDateRange(results, from, to);
-                }
+                // Apply client-side filtering if needed
+                results = ApplyClientSideFiltering(results, withGenres, from, to, sortBy);
 
                 TestContext.WriteLine($"API returned {results.Count} results");
                 return results;
@@ -71,65 +62,160 @@ namespace MovieDBTests.API
             }
         }
 
-        private JArray FilterByDateRange(JArray results, string? from, string? to)
+        private string BuildDiscoverUrl(string sortBy, string? withGenres, string? from, string? to, int page)
         {
-            var filtered = new JArray();
+            var baseUrl = "https://api.themoviedb.org/3/discover/movie";
+            var queryParams = new List<string>();
 
-            foreach (var item in results)
+            // Add API key if Bearer token is not available
+            if (string.IsNullOrWhiteSpace(Utils.Config.BearerToken))
             {
-                var releaseDateStr = item.Value<string>("release_date");
-                if (string.IsNullOrWhiteSpace(releaseDateStr)) continue;
+                queryParams.Add($"api_key={Utils.Config.ApiKey}");
+            }
 
-                if (DateTime.TryParse(releaseDateStr, out var releaseDate))
+            queryParams.Add($"sort_by={Uri.EscapeDataString(sortBy)}");
+            queryParams.Add($"page={page}");
+
+            if (!string.IsNullOrWhiteSpace(withGenres))
+                queryParams.Add($"with_genres={Uri.EscapeDataString(withGenres)}");
+
+            if (!string.IsNullOrWhiteSpace(from))
+                queryParams.Add($"primary_release_date.gte={Uri.EscapeDataString(from)}");
+
+            if (!string.IsNullOrWhiteSpace(to))
+                queryParams.Add($"primary_release_date.lte={Uri.EscapeDataString(to)}");
+
+            return $"{baseUrl}?{string.Join("&", queryParams)}";
+        }
+
+        private async Task<JArray> TryAlternativeEndpoints(int page)
+        {
+            var fallbackUrls = new[]
+            {
+                BuildFallbackUrl("movie/popular", page),
+                BuildFallbackUrl("movie/now_playing", page),
+                BuildFallbackUrl("movie/top_rated", page)
+            };
+
+            foreach (var fallbackUrl in fallbackUrls)
+            {
+                try
                 {
-                    bool includeItem = true;
+                    TestContext.WriteLine($"Trying fallback: {fallbackUrl}");
+                    var resp = await _http.GetAsync(fallbackUrl);
 
-                    if (!string.IsNullOrWhiteSpace(from) && DateTime.TryParse(from, out var fromDate))
+                    if (resp.IsSuccessStatusCode)
                     {
-                        if (releaseDate < fromDate) includeItem = false;
+                        var content = await resp.Content.ReadAsStringAsync();
+                        var json = JObject.Parse(content);
+                        return (JArray)json["results"]!;
                     }
-
-                    if (!string.IsNullOrWhiteSpace(to) && DateTime.TryParse(to, out var toDate))
-                    {
-                        if (releaseDate > toDate) includeItem = false;
-                    }
-
-                    if (includeItem)
-                    {
-                        filtered.Add(item);
-                    }
+                }
+                catch (Exception ex)
+                {
+                    TestContext.WriteLine($"Fallback failed: {ex.Message}");
                 }
             }
 
-            return filtered;
+            throw new Exception("All API endpoints failed");
+        }
+
+        private string BuildFallbackUrl(string endpoint, int page)
+        {
+            var queryParams = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(Utils.Config.BearerToken))
+            {
+                queryParams.Add($"api_key={Utils.Config.ApiKey}");
+            }
+
+            queryParams.Add($"page={page}");
+
+            return $"https://api.themoviedb.org/3/{endpoint}?{string.Join("&", queryParams)}";
+        }
+
+        private JArray ApplyClientSideFiltering(JArray results, string? withGenres, string? from, string? to, string sortBy)
+        {
+            var filtered = new List<JObject>();
+
+            foreach (var item in results.Cast<JObject>())
+            {
+                if (PassesFilters(item, withGenres, from, to))
+                {
+                    filtered.Add(item);
+                }
+            }
+
+            // Sort if needed
+            if (sortBy.Contains("primary_release_date"))
+            {
+                var ascending = sortBy.Contains("asc");
+                filtered = filtered.OrderBy(obj =>
+                {
+                    var dateStr = obj.Value<string>("release_date");
+                    if (DateTime.TryParse(dateStr, out var date))
+                        return ascending ? date : DateTime.MaxValue.Subtract(date.Subtract(DateTime.MinValue));
+                    return ascending ? DateTime.MaxValue : DateTime.MinValue;
+                }).ToList();
+            }
+
+            return new JArray(filtered);
+        }
+
+        private bool PassesFilters(JObject movie, string? withGenres, string? from, string? to)
+        {
+            // Date filtering
+            var releaseDateStr = movie.Value<string>("release_date");
+            if (!string.IsNullOrWhiteSpace(releaseDateStr) && DateTime.TryParse(releaseDateStr, out var releaseDate))
+            {
+                if (!string.IsNullOrWhiteSpace(from) && DateTime.TryParse(from, out var fromDate))
+                {
+                    if (releaseDate < fromDate) return false;
+                }
+
+                if (!string.IsNullOrWhiteSpace(to) && DateTime.TryParse(to, out var toDate))
+                {
+                    if (releaseDate > toDate) return false;
+                }
+            }
+
+            // Genre filtering
+            if (!string.IsNullOrWhiteSpace(withGenres))
+            {
+                var genreIds = withGenres.Split(',').Select(g => int.TryParse(g.Trim(), out var id) ? id : -1).Where(id => id != -1).ToList();
+                var movieGenres = movie.Value<JArray>("genre_ids")?.ToObject<int[]>() ?? new int[0];
+
+                if (genreIds.Any() && !genreIds.Any(gId => movieGenres.Contains(gId)))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         public async Task<List<JObject>> DiscoverAllPagesAsync(string sortBy, string? withGenres, string? from, string? to, int maxPages = 3)
         {
             var all = new List<JObject>();
+
             for (int p = 1; p <= maxPages; p++)
             {
                 try
                 {
                     var arr = await DiscoverAsync(sortBy, withGenres, from, to, p);
-                    foreach (var item in arr) all.Add((JObject)item);
+
                     if (arr.Count == 0) break;
+
+                    foreach (var item in arr.Cast<JObject>())
+                    {
+                        all.Add(item);
+                    }
                 }
                 catch (Exception ex)
                 {
                     TestContext.WriteLine($"Error fetching page {p}: {ex.Message}");
                     break;
                 }
-            }
-
-            // Sort the results if needed
-            if (sortBy.Contains("asc"))
-            {
-                all = all.OrderBy(obj =>
-                {
-                    var dateStr = obj.Value<string>("release_date");
-                    return DateTime.TryParse(dateStr, out var date) ? date : DateTime.MaxValue;
-                }).ToList();
             }
 
             TestContext.WriteLine($"Total results across all pages: {all.Count}");
