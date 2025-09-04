@@ -1,4 +1,4 @@
-MovieDB Test Framework - Complete Solution
+MovieDB Test Framework - Complete Solution - Please view it as code for a better structure. 
 A robust automation framework that tests both UI (via Selenium) and API (via TMDB REST API) functionality for movie discovery and filtering on The Movie Database (TMDB).
 🎯 Test Coverage
 ✅ Completed Requirements
